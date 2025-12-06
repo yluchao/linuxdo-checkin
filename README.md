@@ -88,11 +88,11 @@
       - 自动拆分选择`是`
       - 名称填写(仓库`requirements.txt`文件的完整内容)：
         ```
-        playwright==1.43.0
+        DrissionPage==4.1.0.18
         wcwidth==0.2.13
         tabulate==0.9.0
         loguru==0.7.2
-        requests==2.32.3
+        curl-cffi
         ```
       - 点击`确定`按钮，等待安装完成
 
