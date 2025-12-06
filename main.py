@@ -8,11 +8,11 @@ import random
 import time
 import functools
 import sys
-import requests
 import re
 from loguru import logger
 from DrissionPage import ChromiumOptions, Chromium
 from tabulate import tabulate
+from curl_cffi import requests
 
 
 def retry_decorator(retries=3):
@@ -56,13 +56,12 @@ SC3_PUSH_KEY = os.environ.get("SC3_PUSH_KEY")  # Server酱³ SendKey
 
 HOME_URL = "https://linux.do/"
 LOGIN_URL = "https://linux.do/login"
+SESSION_URL = "https://linux.do/session"
+CSRF_URL = "https://linux.do/session/csrf"
 
 
 class LinuxDoBrowser:
     def __init__(self) -> None:
-        EXTENSION_PATH = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "turnstilePatch")
-        )
         from sys import platform
 
         if platform == "linux" or platform == "linux2":
@@ -72,61 +71,115 @@ class LinuxDoBrowser:
         elif platform == "win32":
             platformIdentifier = "Windows NT 10.0; Win64; x64"
 
-        co = (
-            ChromiumOptions()
-            .headless(True)
-            .add_extension(EXTENSION_PATH)
-            .incognito(True)
-            .set_argument("--no-sandbox")
-        )
+        co = ChromiumOptions().headless(True).incognito(True).set_argument("--no-sandbox")
         co.set_user_agent(
             f"Mozilla/5.0 ({platformIdentifier}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
         )
         self.browser = Chromium(co)
         self.page = self.browser.new_tab()
 
-    def getTurnstileToken(self):
-        self.page.run_js("try { turnstile.reset() } catch(e) { }")
-
-        turnstileResponse = None
-
-        for i in range(0, 5):
-            try:
-                turnstileResponse = self.page.run_js(
-                    "try { return turnstile.getResponse() } catch(e) { return null }"
-                )
-                if turnstileResponse:
-                    return turnstileResponse
-
-                challengeSolution = self.page.ele("@name=cf-turnstile-response")
-                challengeWrapper = challengeSolution.parent()
-                challengeIframe = challengeWrapper.shadow_root.ele("tag:iframe")
-                challengeIframeBody = challengeIframe.ele("tag:body").shadow_root
-                challengeButton = challengeIframeBody.ele("tag:input")
-                challengeButton.click()
-            except Exception as e:
-                logger.warning(f"处理 Turnstile 时出错: {str(e)}")
-            time.sleep(1)
-        # self.page.refresh()
-        # raise Exception("failed to solve turnstile")
-
     def login(self):
         logger.info("开始登录")
-        self.page.get(LOGIN_URL)
-        time.sleep(2)
-        turnstile_token = self.getTurnstileToken()
-        logger.info(f"turnstile_token: {turnstile_token}")
-        self.page.get_screenshot("screenshot.png")
-        self.page.ele("@id=login-account-name").input(USERNAME)
-        self.page.ele("@id=login-account-password").input(PASSWORD)
-        self.page.ele("@id=login-button").click()
-        time.sleep(10)
+
+        session = requests.Session()
+
+        # Common headers
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": LOGIN_URL,
+        }
+
+        # Step 1: Get CSRF Token
+        logger.info("获取 CSRF token...")
+        try:
+            resp_csrf = session.get(CSRF_URL, headers=headers, impersonate="chrome136")
+            csrf_data = resp_csrf.json()
+            csrf_token = csrf_data.get("csrf")
+            logger.info(f"CSRF Token obtained: {csrf_token[:10]}...")
+        except Exception as e:
+            logger.error(f"获取 CSRF token 失败: {e}")
+            return False
+
+        # Step 2: Login
+        logger.info("正在登录...")
+        login_headers = headers.copy()
+        login_headers.update(
+            {
+                "X-CSRF-Token": csrf_token,
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "Origin": "https://linux.do",
+            }
+        )
+
+        data = {
+            "login": USERNAME,
+            "password": PASSWORD,
+            "second_factor_method": "1",
+            "timezone": "Asia/Shanghai",
+        }
+
+        try:
+            resp_login = session.post(
+                SESSION_URL, headers=login_headers, data=data, impersonate="chrome136"
+            )
+
+            if resp_login.status_code == 200:
+                response_json = resp_login.json()
+                if response_json.get("error"):
+                    logger.error(f"登录失败: {response_json.get('error')}")
+                    return False
+                logger.info("登录成功!")
+            else:
+                logger.error(f"登录失败，状态码: {resp_login.status_code}")
+                logger.error(resp_login.text)
+                return False
+        except Exception as e:
+            logger.error(f"登录请求异常: {e}")
+            return False
+
+        # Step 3: Pass cookies to DrissionPage
+        logger.info("同步 Cookie 到 DrissionPage...")
+
+        # Convert requests cookies to DrissionPage format
+        # Using standard requests.utils to parse cookiejar if possible, or manual extraction
+        # requests.Session().cookies is a specialized object, but might support standard iteration
+
+        # We can iterate over the cookies manually if dict_from_cookiejar doesn't work perfectly
+        # or convert to dict first.
+        # Assuming requests behaves like requests:
+
+        cookies_dict = session.cookies.get_dict()
+
+        dp_cookies = []
+        for name, value in cookies_dict.items():
+            dp_cookies.append(
+                {
+                    "name": name,
+                    "value": value,
+                    "domain": ".linux.do",
+                    "path": "/",
+                }
+            )
+
+        self.page.set.cookies(dp_cookies)
+
+        logger.info("Cookie 设置完成，导航至 linux.do...")
+        self.page.get(HOME_URL)
+
+        time.sleep(5)
         user_ele = self.page.ele("@id=current-user")
         if not user_ele:
-            logger.error("登录失败")
+            # Fallback check for avatar
+            if "avatar" in self.page.html:
+                logger.info("登录验证成功 (通过 avatar)")
+                return True
+            logger.error("登录验证失败 (未找到 current-user)")
             return False
         else:
-            logger.info("登录成功")
+            logger.info("登录验证成功")
             return True
 
     def click_topic(self):
@@ -165,7 +218,7 @@ class LinuxDoBrowser:
             current_url = page.url
             if current_url != prev_url:
                 prev_url = current_url
-            elif at_bottom and prev_url == current_url:
+            elif at_bottom or prev_url == current_url:
                 logger.success("已到达页面底部，退出浏览")
                 break
 
@@ -246,9 +299,7 @@ class LinuxDoBrowser:
         if SC3_PUSH_KEY:
             match = re.match(r"sct(\d+)t", SC3_PUSH_KEY, re.I)
             if not match:
-                logger.error(
-                    "❌ SC3_PUSH_KEY格式错误，未获取到UID，无法使用Server酱³推送"
-                )
+                logger.error("❌ SC3_PUSH_KEY格式错误，未获取到UID，无法使用Server酱³推送")
                 return
 
             uid = match.group(1)
