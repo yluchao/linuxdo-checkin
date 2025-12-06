@@ -218,7 +218,7 @@ class LinuxDoBrowser:
             current_url = page.url
             if current_url != prev_url:
                 prev_url = current_url
-            elif at_bottom or prev_url == current_url:
+            elif at_bottom and prev_url == current_url:
                 logger.success("已到达页面底部，退出浏览")
                 break
 
