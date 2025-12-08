@@ -13,6 +13,7 @@ from loguru import logger
 from DrissionPage import ChromiumOptions, Chromium
 from tabulate import tabulate
 from curl_cffi import requests
+from bs4 import BeautifulSoup
 
 
 def retry_decorator(retries=3):
@@ -71,19 +72,30 @@ class LinuxDoBrowser:
         elif platform == "win32":
             platformIdentifier = "Windows NT 10.0; Win64; x64"
 
-        co = ChromiumOptions().headless(True).incognito(True).set_argument("--no-sandbox")
+        co = (
+            ChromiumOptions()
+            .headless(True)
+            .incognito(True)
+            .set_argument("--no-sandbox")
+        )
         co.set_user_agent(
             f"Mozilla/5.0 ({platformIdentifier}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
         )
         self.browser = Chromium(co)
         self.page = self.browser.new_tab()
+        self.session = requests.Session()
+        self.session.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "Accept-Language": "zh-CN,zh;q=0.9",
+            }
+        )
 
     def login(self):
         logger.info("开始登录")
-
-        session = requests.Session()
-
-        # Common headers
+        # Step 1: Get CSRF Token
+        logger.info("获取 CSRF token...")
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0",
             "Accept": "application/json, text/javascript, */*; q=0.01",
@@ -91,22 +103,14 @@ class LinuxDoBrowser:
             "X-Requested-With": "XMLHttpRequest",
             "Referer": LOGIN_URL,
         }
-
-        # Step 1: Get CSRF Token
-        logger.info("获取 CSRF token...")
-        try:
-            resp_csrf = session.get(CSRF_URL, headers=headers, impersonate="chrome136")
-            csrf_data = resp_csrf.json()
-            csrf_token = csrf_data.get("csrf")
-            logger.info(f"CSRF Token obtained: {csrf_token[:10]}...")
-        except Exception as e:
-            logger.error(f"获取 CSRF token 失败: {e}")
-            return False
+        resp_csrf = self.session.get(CSRF_URL, headers=headers, impersonate="chrome136")
+        csrf_data = resp_csrf.json()
+        csrf_token = csrf_data.get("csrf")
+        logger.info(f"CSRF Token obtained: {csrf_token[:10]}...")
 
         # Step 2: Login
         logger.info("正在登录...")
-        login_headers = headers.copy()
-        login_headers.update(
+        headers.update(
             {
                 "X-CSRF-Token": csrf_token,
                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
@@ -122,8 +126,8 @@ class LinuxDoBrowser:
         }
 
         try:
-            resp_login = session.post(
-                SESSION_URL, headers=login_headers, data=data, impersonate="chrome136"
+            resp_login = self.session.post(
+                SESSION_URL, data=data, impersonate="chrome136", headers=headers
             )
 
             if resp_login.status_code == 200:
@@ -151,7 +155,7 @@ class LinuxDoBrowser:
         # or convert to dict first.
         # Assuming requests behaves like requests:
 
-        cookies_dict = session.cookies.get_dict()
+        cookies_dict = self.session.cookies.get_dict()
 
         dp_cookies = []
         for name, value in cookies_dict.items():
@@ -257,24 +261,21 @@ class LinuxDoBrowser:
 
     def print_connect_info(self):
         logger.info("获取连接信息")
-        page = self.browser.new_tab()
-        page.get("https://connect.linux.do/")
-        rows = page.ele("tag:table").eles("tag:tr")
-
+        resp = self.session.get("https://connect.linux.do/", impersonate="chrome136")
+        soup = BeautifulSoup(resp.text, "html.parser")
+        rows = soup.select("table tr")
         info = []
 
         for row in rows:
-            cells = row.eles("tag:td")
+            cells = row.select("td")
             if len(cells) >= 3:
                 project = cells[0].text.strip()
-                current = cells[1].text.strip()
-                requirement = cells[2].text.strip()
+                current = cells[1].text.strip() if cells[1].text.strip() else "0"
+                requirement = cells[2].text.strip() if cells[2].text.strip() else "0"
                 info.append([project, current, requirement])
 
         print("--------------Connect Info-----------------")
         print(tabulate(info, headers=["项目", "当前", "要求"], tablefmt="pretty"))
-
-        page.close()
 
     def send_notifications(self, browse_enabled):
         status_msg = "✅每日登录成功"
@@ -299,7 +300,9 @@ class LinuxDoBrowser:
         if SC3_PUSH_KEY:
             match = re.match(r"sct(\d+)t", SC3_PUSH_KEY, re.I)
             if not match:
-                logger.error("❌ SC3_PUSH_KEY格式错误，未获取到UID，无法使用Server酱³推送")
+                logger.error(
+                    "❌ SC3_PUSH_KEY格式错误，未获取到UID，无法使用Server酱³推送"
+                )
                 return
 
             uid = match.group(1)
