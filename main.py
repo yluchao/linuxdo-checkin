@@ -235,12 +235,13 @@ class LinuxDoBrowser:
         if not self.login():  # 登录
             logger.error("登录失败，程序终止")
             sys.exit(1)  # 使用非零退出码终止整个程序
+            
+        self.print_connect_info()  # 打印连接信息
 
         if BROWSE_ENABLED:
             self.click_topic()  # 点击主题
             logger.info("完成浏览任务")
 
-        self.print_connect_info()  # 打印连接信息
         self.send_notifications(BROWSE_ENABLED)  # 发送通知
         self.page.close()
         self.browser.quit()
