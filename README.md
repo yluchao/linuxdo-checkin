@@ -82,19 +82,26 @@
 *注意：如果是docker容器创建的青龙，**请使用`whyour/qinglong:debian`镜像**，latest（alpine）版本可能无法安装部分依赖*
 
 1. **依赖安装**
-    - 首次运行前需要安装Python依赖
-    - 进入青龙面板 -> 依赖管理 -> 安装依赖
-      - 依赖类型选择`python3`
-      - 自动拆分选择`是`
-      - 名称填写(仓库`requirements.txt`文件的完整内容)：
-        ```
-        DrissionPage==4.1.0.18
-        wcwidth==0.2.13
-        tabulate==0.9.0
-        loguru==0.7.2
-        curl-cffi
-        ```
-      - 点击`确定`按钮，等待安装完成
+    - 安装Python依赖
+      - 进入青龙面板 -> 依赖管理 -> 安装依赖
+        - 依赖类型选择`python3`
+        - 自动拆分选择`是`
+        - 名称填写(仓库`requirements.txt`文件的完整内容)：
+            ```
+            DrissionPage==4.1.0.18
+            wcwidth==0.2.13
+            tabulate==0.9.0
+            loguru==0.7.2
+            curl-cffi
+            bs4
+            ```
+        - 点击确定
+    - 安装 linux chromium 依赖
+      - 青龙面板 -> 依赖管理 -> 安装Linux依赖
+      - 名称填`chromium`
+  
+        > 若安装失败，可能需要执行`apt update`更新索引（若使用docker则需进入docker容器执行）
+
 
 2. **添加仓库**
     - 进入青龙面板 -> 订阅管理 -> 创建订阅
@@ -105,7 +112,6 @@
       - **分支**：main
       - **定时类型**：`crontab`
       - **定时规则**(拉取上游代码的时间，一天一次，可以自由调整频率): 0 0 * * *
-      - **执行前**(注意：要先完成上一步的依赖安装才能执行这个指令)：`playwright install --with-deps firefox`
 
 3. **配置环境变量**
     - 进入青龙面板 -> 环境变量 -> 创建变量
